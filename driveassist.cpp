@@ -2,10 +2,8 @@
 #include <stdint.h>
 #include <opencv2/opencv.hpp>
 #include <opencv2/legacy/legacy.hpp>
-
 #include "driveassist.hpp"
-
-#define LANE_USE_KALMAN 1
+//#define LANE_USE_KALMAN 1
 
 /// 高速路
 /*
@@ -52,7 +50,6 @@ int KFStateR = 445;
 #define CAR_CASCADE "/media/TOURO/opencv/车辆样本/haarcascade764hog/cascade.xml"
 #define ROADMARK_CASCADE "/media/TOURO/opencv/roadmark/data-all-haar/cascade.xml"
 #define ROADMARK2_CASCADE "/media/TOURO/opencv/roadmark2/data-all-haar/cascade.xml"
-
 #define NEG_DIR "/media/TOURO/opencv/neg/"
 
 
@@ -169,6 +166,8 @@ void onGaussianChange(int _x, void* _ptr) {
     cout<<"垂直高斯核: "<<&gaussianKernelY<<"\n";
 }
 
+#ifdef LANE_USE_KALMAN
+
 void onKFChange(int _x, void* _ptr) {
     if (lkf == NULL) {
         return;
@@ -177,6 +176,7 @@ void onKFChange(int _x, void* _ptr) {
     lkf->setStateLaneL(KFStateL);
     lkf->setStateLaneR(KFStateR);
 }
+#endif
 
 /**
  * 查找一个一维数组中的最大值所在的位置，并按照最大值大小降序排列，返回点的坐标
@@ -313,7 +313,6 @@ void onROIChange(int _x, void* ptr) {
     roiRoadmark.y = roadmarkROIY;
     roiRoadmark.width = roadmarkROIWidth;
     roiRoadmark.height = roadmarkROIHeight;
-
 }
 
 /**
@@ -339,8 +338,6 @@ void cutRegion(Mat *imgInput, Rect _roi, const char* dir) {
     
     /// 绘制截图区域
     rectangle(imgOrigin, Point(_roi.x, _roi.y), Point(_roi.x + _roi.width, _roi.y + _roi.height), CV_RGB(255, 0, 0), 2);
-
-
     snprintf(path, sizeof(path) - 1, "%s/%06d.png", dir, ++i);
     imwrite(path, Mat(*imgInput, _roi));
 }
@@ -481,13 +478,9 @@ vector<int> lanePF(Mat& _iInput) {
     
     line(_iInput, Point(con->State[0], 0), Point(con->State[1], iInput.rows), CV_RGB(128, 128, 128), 1);
     cout<<"预测位置："<<con->State[0]<<endl;
-
-
-    vector<int> ret;
-    
+    vector<int> ret;    
     ret.push_back(con->State[0]);
-    ret.push_back(con->State[1]);
-    
+    ret.push_back(con->State[1]);    
     delete[] stdLine;
     return ret;
 }
@@ -524,38 +517,21 @@ void detectLane(Mat imgInput) {
     //imshow(winROI, imgROI2);
 
 
-    /// 高斯模糊
-    
+    /// 高斯模糊    
     sepFilter2D(imgIPM, imgGaussian, imgIPM.depth(), gaussianKernelX, gaussianKernelY);
-    /*
-    if (gaussianSize % 2 == 0) {
-        gaussianSize += 1;
-    }
-    GaussianBlur(imgIPM, imgGaussian, Size(gaussianSize, gaussianSize), sigmaX, sigmaY);
-    */
-    imshow(winGaussian, imgGaussian);
-    
+    imshow(winGaussian, imgGaussian);   
     
     
     
     /// 阈值过滤
     Mat imgHist;
-    //Mat imgThresholdTmp;
+
     
     equalizeHist(imgGaussian, imgHist);
     threshold(imgHist, imgThreshold, 255 * thresholdingQ / 1000, 255, THRESH_TOZERO);
-    //adaptiveThreshold(imgHist, imgThreshold, 255 * thresholdingQ / 1000, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 5, 4);
-    //Canny(imgHist, imgThreshold, 200, 10);
-
-    //imshow(winThreshold, imgThreshold);
-    
-    //imshow("阈值化（前）", imgThresholdTmp);
-    
-    //laneFilter(imgThresholdTmp, imgThreshold, 50);
     
     vector<int> pfXs;
-    pfXs = lanePF<uint8_t>(imgThreshold);
-    
+    pfXs = lanePF<uint8_t>(imgThreshold);  
     
     
     /// 计算道路响应曲线
@@ -588,24 +564,19 @@ void detectLane(Mat imgInput) {
     // 计算曲线顶点并绘制
     Mat datPeaks;
     Mat imgThreshold2;
-    LineFit lineFit(&imgThreshold, &resp);;
-    
-    imgThreshold.copyTo(imgThreshold2);
-    
+    LineFit lineFit(&imgThreshold, &resp);    
+    imgThreshold.copyTo(imgThreshold2);    
     findPeaks<float>(resp, datPeaks, 10, groupingThreshold);
     
-    #ifdef LANE_USE_KALMAN
+#ifdef LANE_USE_KALMAN
     if (lkf == NULL) {
         lkf = new LaneKalmanFilter(imgIPM32.size());
         onKFChange(0, NULL);
         lkf->setStateLaneL(KFStateL);
         lkf->setStateLaneR(KFStateR);
-    }
-    
+    }    
     lkf->next();    /// 开始新一轮迭代
-    #endif
-    
-    
+#endif
     for (i = 0; i < datPeaks.cols; i++) {
         float x;
         x = datPeaks.at<float>(0, i);
@@ -621,9 +592,7 @@ void detectLane(Mat imgInput) {
         }
         
         line(imgGaussian, Point(x, 0), Point(x, imgGaussian.rows), CV_RGB(255, 255, 255));
-        //line(imgThreshold, Point(x, 0), Point(x, imgGaussian.rows), CV_RGB(255, 255, 255));
-        //imshow(winThreshold, imgThreshold);
-        
+         
         /// RANSAC 三次贝塞尔曲线拟合道路
         
         int u, v;
@@ -637,66 +606,12 @@ void detectLane(Mat imgInput) {
         }
         
         
-        /// 进行 RANSAC 拟合，然后绘制拟合后的曲线
-        /*
-        vector<Point3f> psSpline = ransacFit.fit(ransacIterNum, imgThreshold);
-        float t;
-        Point p, pOld;
-        if( psSpline.size() > 0) {
-            pOld = ransacFit.getPoint(0, psSpline);
-            
-            for (t = 0.01; t <= 1; t += 0.01) {
-                Point p = ransacFit.getPoint(t, psSpline);
-                
-                line(imgIPM32, pOld, p, CV_RGB(255, 0, 0));
-                pOld = p;
-            }
-        }
-        else {
-            cout<<"没有拟合线条"<<endl;
-        }
-        */
-        /// RANSAC 三次贝塞尔曲线拟合结束
-        
-        
-        /// 简单直线拟合道路
-        /**
-        std::vector<cv::Point2f> ps;
-        Vec4f psOut;
-        srand(i);
-        int r, g, b;
-        r = rand() % 255; g = rand() % 255; b = rand() % 255;
-        for (u = x - 50; u < x + 50; u++) {
-            for (v = 0; v < imgThreshold.rows; v++) {
-                if (imgThreshold.ptr<uint8_t>(v)[u] > 0) {
-                    line(imgThreshold2, Point(u, v), Point(u, v), CV_RGB(r, g, b));
-                    line(imgIPM32, Point(u, v), Point(u, v), CV_RGB(r, g, b));
-                    ps.push_back(cv::Point2f(u, v));
-                }
-            }
-        }
-        
-        if (ps.size() > 0) {
-            fitLine(ps, psOut, CV_DIST_L2, 0, 0.01, 0.01);
-            float x1, x2, y1, y2;
-            x1 = psOut[2];
-            y1 = psOut[3];
-            x2 = psOut[2] + 300 * psOut[0];
-            y2 = psOut[3] + 300 * psOut[1];
-            line(imgIPM32, Point(x1, y1), Point(x2, y2), CV_RGB(r, g, b), 2);
-            line(imgThreshold2, Point(x1, y1), Point(x2, y2), CV_RGB(r, g, b), 2);
-        }
-        */
-        /// 直线拟合道路结束
-        
-        
         /// 高级直线拟合道路开始
         
         vector<int> rangeX;
         vector<Point> fitP;
         
         rangeX = lineFit.getRange(x);
-        //fprintf(stderr, "Range = (%d, %d) = %d\n", rangeX.at(0), rangeX.at(1), rangeX.at(1) - rangeX.at(0));
         fitP = lineFit.fitLine(rangeX.at(0), rangeX.at(1));
         
         /// 拟合范围（黄线）
@@ -705,7 +620,7 @@ void detectLane(Mat imgInput) {
         line(imgIPM32, fitP[0], fitP[1], CV_RGB(255, 0, 0));
         
         #ifdef LANE_USE_KALMAN
-        lkf->addLine(fitP[0], fitP[1]);
+            lkf->addLine(fitP[0], fitP[1]);
         #endif
         
         /// 在 imgROI 图上画出拟合道路
@@ -727,83 +642,12 @@ void detectLane(Mat imgInput) {
         psOut.at(1).y += roiLane.y;
         
         line(imgOrigin, psOut.at(0), psOut.at(1), CV_RGB(255, 0, 255), 2);
-        
-        /// 高级直线拟合道路结束
-        
-        
-        /// 二次贝塞尔曲线道路拟合开始
-        /**
-        vector<int> rangeX;
-        vector<Point> fitP;
-        Point pS, pE, pC;
-        float t;
-        
-        rangeX = lineFit.getRange(x);
-        //fprintf(stderr, "Range = (%d, %d) = %d\n", rangeX.at(0), rangeX.at(1), rangeX.at(1) - rangeX.at(0));
-        fitP = lineFit.fitBeizer2R(rangeX.at(0), rangeX.at(1));
-        pS = fitP[0];
-        pE = fitP[1];
-        pC = fitP[2];
-        
-        Point pOld(-1, -1);
-        for (t = 0; t <= 1; t += 1.0 / imgIPM32.cols) {
-            u = (1 - t) * (1 - t) * pS.x + 2 * t * (1 - t) * pC.x + t * t * pE.x;
-            v = (1 - t) * (1 - t) * pS.y + 2 * t * (1 - t) * pC.y + t * t * pE.y;
-            
-            Point p(u, v);
-            if (pOld.x != -1 || pOld.y != -1) {
-                line(imgIPM32, pOld, p, CV_RGB(255, 0, 0));
-            }
-            pOld = p;
-        }            
-        
-        line(imgIPM32, Point(rangeX.at(0), 0), Point(rangeX.at(0), imgIPM32.cols), CV_RGB(255, 255, 0));
-        line(imgIPM32, Point(rangeX.at(1), 0), Point(rangeX.at(1), imgIPM32.cols), CV_RGB(255, 255, 0));
-        
-        
-        /// 在 imgROI 图上画出拟合道路
-        
-        vector<Point2f> ps;
-        vector<Point2f> psOut;
-
-        ps.push_back(Point2f(fitP[0].x, fitP[0].y));
-        ps.push_back(Point2f(fitP[1].x, fitP[1].y));
-        ps.push_back(Point2f(fitP[2].x, fitP[2].y));
-        
-        perspectiveTransform(ps, psOut, tsfIPMInv);
-        
-        
-        line(imgROI, psOut.at(0), psOut.at(1), CV_RGB(0, 0, 255), 2);
-        
-        /// 在原图上画出拟合道路
-        psOut.at(0).x += roiLane.x;
-        psOut.at(0).y += roiLane.y;
-        psOut.at(1).x += roiLane.x;
-        psOut.at(1).y += roiLane.y;
-        psOut.at(2).x += roiLane.x;
-        psOut.at(2).y += roiLane.y;
-        
-        pS = psOut.at(0);
-        pE = psOut.at(1);
-        pC = psOut.at(2);
-        
-        pOld.x = pOld.y = -1;
-        for (t = 0; t <= 1; t += 1.0 / imgIPM32.cols) {
-            u = (1 - t) * (1 - t) * pS.x + 2 * t * (1 - t) * pC.x + t * t * pE.x;
-            v = (1 - t) * (1 - t) * pS.y + 2 * t * (1 - t) * pC.y + t * t * pE.y;
-            
-            Point p(u, v);
-            if (pOld.x != -1 || pOld.y != -1) {
-                line(imgInput, pOld, p, CV_RGB(255, 0, 255), 2);
-            }
-            pOld = p;
-        }     
-        */
-        
-        /// 二次曲线道路拟合结束
 
     }
     
+    /// 在 imgOrigin 上画出滤波后的车道线和状态车道线
+    vector<Point2f> ps;
+    vector<Point2f> psOut;
     
     #ifdef LANE_USE_KALMAN
     /// 道路标线卡尔曼滤波
@@ -824,9 +668,7 @@ void detectLane(Mat imgInput) {
     line(imgIPM32, rSLane[0], rSLane[1], CV_RGB(0, 0, 255));
     
     
-    /// 在 imgOrigin 上画出滤波后的车道线和状态车道线
-    vector<Point2f> ps;
-    vector<Point2f> psOut;
+    
     
     ps.push_back(lLane[0]);
     ps.push_back(lLane[1]);
@@ -851,8 +693,8 @@ void detectLane(Mat imgInput) {
     line(imgOrigin, psOut[4], psOut[5], CV_RGB(0, 0, 255), 1, CV_AA);
     line(imgOrigin, psOut[6], psOut[7], CV_RGB(0, 0, 255), 1, CV_AA);
 
-    #endif
-    
+
+    #endif    
 
     /// 在原图上画出粒子滤波车道线
     ps.clear();
@@ -864,13 +706,8 @@ void detectLane(Mat imgInput) {
         psOut.at(i).x += roiLane.x;
         psOut.at(i).y += roiLane.y;
     }
-
     /// 粒子车道线
     line(imgOrigin, psOut[0], psOut[1], CV_RGB(255, 0, 0), 2, CV_AA);
-
-
-
-
     imshow(winGaussian, imgGaussian);
     imshow(winThreshold, imgThreshold2);
     
@@ -986,8 +823,6 @@ void detectCar(Mat *imgInput, Rect _roi) {
         putText(imgOrigin, String(cTxt), pTxt, FONT_HERSHEY_SIMPLEX, 0.7, CV_RGB(0, 0, 255));
         snprintf(cTxt, sizeof(cTxt) - 1, "%0.1f", cars[i].width * 1.0 / tan(cars[i].y));
         putText(imgOrigin, String(cTxt), p1, FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 128, 0));
-        
-        
     }
 }
 
@@ -1142,10 +977,7 @@ void detectRoadmark(Mat *imgInput, Rect _roi) {
 
 int main()
 {
-    int frameIdx = 0;
-    
-    
-    
+    int frameIdx = 0;   
     namedWindow(winOrigin, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
     namedWindow(winROI, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
     namedWindow(winGray, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
@@ -1153,12 +985,9 @@ int main()
     namedWindow(winGaussian, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
     namedWindow(winThreshold, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
     namedWindow(winIPM32, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
-    namedWindow(winRoadmark, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
-    
+    namedWindow(winRoadmark, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);    
     namedWindow(winConfig, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
-    namedWindow(winConfig2, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);
-    
-    
+    namedWindow(winConfig2, CV_WINDOW_KEEPRATIO | CV_WINDOW_NORMAL);    
     createTrackbar("ROI x", winOrigin, &roiX, 1080, onROIChange);
     createTrackbar("ROI y", winOrigin, &roiY, 1920, onROIChange);
     createTrackbar("ROI width", winOrigin, &roiWidth, 1920, onROIChange);
@@ -1168,26 +997,25 @@ int main()
     createTrackbar("\\sigma_{y}", winGaussian, &sigmaY, 200, onGaussianChange);
     createTrackbar("核大小", winGaussian, &gaussianSize, 200, onGaussianChange);
     createTrackbar("阈值‰", winThreshold, &thresholdingQ, 1000, NULL);
-    
     createTrackbar("健忘程度/100", winConfig, &peakFilterAlpha, 100, NULL);
     createTrackbar("合并邻域", winConfig, &groupingThreshold, 100, NULL);
-    createTrackbar("RANSAC 迭代次数", winConfig, &ransacIterNum, 500, NULL);
-    
+    createTrackbar("RANSAC 迭代次数", winConfig, &ransacIterNum, 500, NULL);    
     createTrackbar("mm/px", winConfig, &mmppx, 1000, onROIChange);
     createTrackbar("car X", winConfig, &carOriginX, 1000, onROIChange);
     createTrackbar("car Y", winConfig, &carOriginY, 1000, onROIChange);
     createTrackbar("car ROI X", winConfig, &carROIX, 1000, onROIChange);
     createTrackbar("car ROI Y", winConfig, &carROIY, 1000, onROIChange);
     createTrackbar("car ROI Width", winConfig, &carROIWidth, 2000, onROIChange);
-    createTrackbar("car ROI Height", winConfig, &carROIHeight, 2000, onROIChange);
-    
+    createTrackbar("car ROI Height", winConfig, &carROIHeight, 2000, onROIChange);    
     createTrackbar("roadmark ROI X", winConfig2, &roadmarkROIX, 1000, onROIChange);
     createTrackbar("~ Y", winConfig2, &roadmarkROIY, 1000, onROIChange);
     createTrackbar("~ Width", winConfig2, &roadmarkROIWidth, 2000, onROIChange);
-    createTrackbar("~ Height", winConfig2, &roadmarkROIHeight, 2000, onROIChange);
-    
+    createTrackbar("~ Height", winConfig2, &roadmarkROIHeight, 2000, onROIChange); 
+
+#ifdef LANE_USE_KALMAN   
     createTrackbar("KF状态左X", winConfig2, &KFStateL, 1000, onKFChange);
     createTrackbar("KF状态右X", winConfig2, &KFStateR, 1000, onKFChange);
+#endif
     
     //createTrackbar("src Y", winGray, &srcY, 480, NULL);
     
@@ -1214,9 +1042,9 @@ int main()
         
         
     #ifdef LANE_USE_KALMAN
-    fprintf(stderr, "道路标线使用了卡尔曼滤波\n");
+        fprintf(stderr, "道路标线使用了卡尔曼滤波\n");
     #else
-    fprintf(stderr, "道路标线没有使用卡尔曼滤波\n");
+        fprintf(stderr, "道路标线没有使用卡尔曼滤波\n");
     #endif
     
     
@@ -1226,48 +1054,28 @@ int main()
         if (start < 2) {
             //waitKey();
             start += 1;
-        }
-        
+        }        
         
         capVideo >> frame;
-
 
         if (frame.empty()) {
             break;
         }
         else {
-            frameIdx++;
-            //fprintf(stderr, "Processing frame %d", frameIdx);
+            frameIdx++;            
         }
         
         
         /// 原图
-        resize(frame, imgOrigin, Size(frame.cols / 1.5, frame.rows / 1.5));
-        
-        
-        Mat imgClone = imgOrigin.clone();
-        
-        detectLane(imgClone);
-            
-        //detectCar(&imgClone, roiCarDetect);
-        //detectRoadmark(&imgClone, roiRoadmark);
-        
-        //detectRoadmark2(&imgClone);
-        
-        //cutRegion(&imgClone, roiRoadmark, "/media/TOURO/cutroi");  /// 暂时使用 roadmark 的 ROI 区域
-        
+        resize(frame, imgOrigin, Size(frame.cols / 1.5, frame.rows / 1.5));        
+        Mat imgClone = imgOrigin.clone();        
+        detectLane(imgClone);           
 
         imshow(winOrigin, imgOrigin);
         imshow(winIPM32, imgIPM32);
         imshow(winROI, imgROI);
         
-        oVideoWriter.write(imgOrigin);
-
-        
-        
-        
-
-        
+        oVideoWriter.write(imgOrigin);        
         waitKey(10);
         //waitKey();
     }
